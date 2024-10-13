@@ -23,15 +23,28 @@ RFC1918_RANGES = [
 ]
 COMMON_PORTS = [80, 443, 389, 53, 22]
 
+# Syslog format types
+SYSLOG_TYPES = {
+    "1": "Cisco ASA",
+    "2": "Snare Windows 2008 Event log",
+    "3": "MS Windows Event Logging XML",
+    "4": "AWS",
+    "5": "Nessus",
+    "6": "Netflow",
+    "7": "eStreamer",
+    "8": "Check Point"
+}
+
 console = Console()
 
 class SyslogSimulator:
-    def __init__(self, splunk_ip, url, live_ip_percentage, log_type, max_ip_count=MAX_IP_COUNT):
+    def __init__(self, splunk_ip, url, live_ip_percentage, log_type, max_ip_count=MAX_IP_COUNT, random_format=False):
         self.splunk_ip = splunk_ip
         self.url = url
         self.live_ip_percentage = live_ip_percentage
         self.log_type = log_type
         self.max_ip_count = max_ip_count
+        self.random_format = random_format
         self.external_ips = self.fetch_external_ips()
         self.ip_list = self.generate_ip_list()
         self.speed_options = {
@@ -85,43 +98,47 @@ class SyslogSimulator:
         return src_ip, dest_ip
 
     def format_syslog_message(self, src_ip, dest_ip, src_port, dest_port):
-        """Generate a syslog message based on the chosen log type."""
+        """Generate a syslog message based on the chosen or random log type."""
         timestamp = time.strftime('%b %d %H:%M:%S', time.localtime())
-        if self.log_type == "Cisco ASA":
+
+        # Choose a random log type if random_format is enabled
+        log_type = random.choice(list(SYSLOG_TYPES.values())) if self.random_format else self.log_type
+
+        if log_type == "Cisco ASA":
             return (
                 f"{timestamp} {self.splunk_ip} : %ASA-6-302015: Built outbound TCP connection "
                 f"{random.randint(100000, 999999)} for outside:{src_ip}/{src_port} to inside:{dest_ip}/{dest_port}"
             )
-        elif self.log_type == "Snare Windows 2008 Event log":
+        elif log_type == "Snare Windows 2008 Event log":
             return (
                 f"{timestamp} {self.splunk_ip} MSWinEventLog 5 Security 600 None {random.randint(1000000, 9999999)} "
                 f"{src_ip} Administrator {dest_ip} - User authentication succeeded"
             )
-        elif self.log_type == "MS Windows Event Logging XML":
+        elif log_type == "MS Windows Event Logging XML":
             return (
                 f"{timestamp} {self.splunk_ip} <Event><System><EventID>{random.randint(1000, 9999)}</EventID><Level>4</Level>"
                 f"<Provider Name='Microsoft-Windows-Security-Auditing'/><EventRecordID>{random.randint(50000, 100000)}</EventRecordID></System>"
                 f"<EventData><Data>{src_ip}</Data><Data>{dest_ip}</Data></EventData></Event>"
             )
-        elif self.log_type == "AWS":
+        elif log_type == "AWS":
             return (
                 f"{timestamp} {self.splunk_ip} AWSCloudTrail [INFO] Event {random.randint(1000, 9999)}: "
                 f"Action performed by {src_ip} targeting {dest_ip}"
             )
-        elif self.log_type == "Nessus":
+        elif log_type == "Nessus":
             return (
                 f"{timestamp} Nessus Scan Report: Host {src_ip} scanned, vulnerability detected on port {dest_port}"
             )
-        elif self.log_type == "Netflow":
+        elif log_type == "Netflow":
             return (
                 f"{timestamp} Netflow Event: {src_ip}:{src_port} -> {dest_ip}:{dest_port} "
                 f"Protocol TCP, {random.randint(1000, 10000)} bytes transferred"
             )
-        elif self.log_type == "eStreamer":
+        elif log_type == "eStreamer":
             return (
                 f"{timestamp} eStreamer: Alert triggered from {src_ip} to {dest_ip}, Event ID {random.randint(10000, 99999)}"
             )
-        elif self.log_type == "Check Point":
+        elif log_type == "Check Point":
             return (
                 f"{timestamp} CheckPoint Log: Accept packet from {src_ip} to {dest_ip}, Action accept"
             )
@@ -185,7 +202,7 @@ class SyslogSimulator:
 
 # Syslog type function to prompt for syslog format
 def get_syslog_type():
-    """Prompt the user to select a syslog type using numbered choices."""
+    """Prompt the user to select a syslog type using numbered choices, with a random selection option."""
     console.print("\n[bold]Choose the syslog format:[/bold]")
     console.print("1 - Cisco ASA")
     console.print("2 - Snare Windows 2008 Event log")
@@ -195,20 +212,14 @@ def get_syslog_type():
     console.print("6 - Netflow")
     console.print("7 - eStreamer")
     console.print("8 - Check Point")
+    console.print("[bold orange3]9 - Random (selection will randomly pick a format each time)[/bold orange3]")
 
     while True:
-        choice = Prompt.ask("Enter the number corresponding to the syslog type", choices=["1", "2", "3", "4", "5", "6", "7", "8"], default="1")
-        syslog_types = {
-            "1": "Cisco ASA",
-            "2": "Snare Windows 2008 Event log",
-            "3": "MS Windows Event Logging XML",
-            "4": "AWS",
-            "5": "Nessus",
-            "6": "Netflow",
-            "7": "eStreamer",
-            "8": "Check Point"
-        }
-        return syslog_types[choice]
+        choice = Prompt.ask("Enter the number corresponding to the syslog type", choices=["1", "2", "3", "4", "5", "6", "7", "8", "9"], default="1")
+        if choice == "9":
+            return None, True  # Random mode enabled
+        else:
+            return SYSLOG_TYPES[choice], False
 
 def main():
     console.print("[bold blue]Welcome to the Syslog Simulator![/bold blue]\n")
@@ -217,9 +228,9 @@ def main():
     
     live_ip_percentage = float(Prompt.ask("[bold cyan]Enter the percentage of traffic using live (external) IPs (0.1 to 99.99)[/bold cyan]", default="10.0"))
     
-    log_type = get_syslog_type()
+    log_type, random_format = get_syslog_type()  # Get syslog type and check if random mode is selected
     
-    simulator = SyslogSimulator(splunk_ip, url, live_ip_percentage, log_type)
+    simulator = SyslogSimulator(splunk_ip, url, live_ip_percentage, log_type, random_format=random_format)
     delay_range = simulator.get_logging_speed()
     simulator.start_simulation(delay_range)
 
